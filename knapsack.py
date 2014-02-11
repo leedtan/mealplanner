@@ -31,6 +31,33 @@ orig_target = dict(
     Selenium=55,
     Sodium=1500,
     Zinc=11,
+    Sugar_Tot=1
+    )
+max_target = dict(
+    Fiber_TD=150,
+    Protein=300,
+    Vit_A_RAE=3000,
+    Vit_C=2000,
+    Vit_D_mcg=100,
+    Vit_E=1000,
+    Niacin=35,
+    Vit_B6=100,
+    Folate_Tot=1000,
+    Choline_Tot=3500,
+    Boron=20,
+    Calcium=2500,
+    Copper=10000,
+    Fluoride=10,
+    Manganese=11,
+    Phosphorus=4000,
+    Selenium=400,
+    Zinc=40,
+    Sodium=2300
+    )
+optimization_macros = dict(
+    Sugar_Tot = -.01,
+    Protein = .01,
+    Fiber_TD = .02
     )
 
 empty_micros = dict(
@@ -60,10 +87,9 @@ empty_micros = dict(
     Selenium=0,
     Sodium=0,
     Zinc=0,
+    Sugar_Tot=0,
     )
 
-	
-	
 #divide nutritient by calorie
 def get_db_nuts(target_keys):
     db_nuts = {tkey: {} for tkey in target_keys}
@@ -82,111 +108,143 @@ def get_sorted_nuts(db_nuts, target_keys):
             db_nuts[tkey].iteritems(), reverse=True, key=lambda x: x[1])
     return sorted_nuts
 
-#pick top from each micronutrient
-def get_meal(sorted_nuts, target_keys):
-    meal = []
+def get_worst(meal, db_copy, db, target_keys, cur_micros, max_target):
+    sorted_nuts = sorted(
+        meal, reverse=True, 
+        key=lambda x: bad_val(db[x[0]], target_keys, cur_micros, max_target))
+    return sorted_nuts[0]
+
+def bad_val(item, target_keys, cur_micros, max_target):
+    add_val = 0
+    fit_val = 0
+    percent_over = 0
+    if item["Energ_Kcal"] == 0:
+        return 0;
     for tkey in target_keys:
-        k, v = sorted_nuts[tkey][0]
-        weight = target[tkey] / (v * db[k]["Energ_Kcal"])
-        meal.append((k, weight))
-
-        for key in target_keys:
-            if key == tkey:
-                target[key] = 0
-            elif db[k][key]:
-                target[key] = (0 if db[k][key] * weight > target[key]
-                               else target[key] - db[k][key] * weight)
-    return meal
-
-#return a sorted listed of tuples of (itemcode, fit_val), sorted by fit_val
-#where fit_val = get_fit_val(item, target, target_keys, cur_macros)
-
+        if (not(item[tkey])):
+            continue
+        if (not(tkey in max_target)):
+            continue
+        try:
+            percent_over = (cur_micros[tkey]-max_target[tkey])/max_target[tkey]
+            percent_over = max(percent_over, 0)
+            add_val = percent_over*item[tkey]/max_target[tkey]
+            fit_val += add_val
+        except:
+            fit_val = fit_val
+    return fit_val/(item["Energ_Kcal"])
+    
 def get_best(db_copy, target_keys, cur_micros):
-	sorted_nuts = dict()
-	sorted_nuts = sorted(
-		db_copy.iteritems(), reverse=True, 
-		key=lambda x: get_fit_val(x, target_keys, cur_micros))
-	return sorted_nuts[0]
-	
-	#def get_best(db_nuts, target_keys, cur_micros):
-	#sorted_nuts = dict()
-	#sorted_nuts[0] = sorted(
-#		db_nuts[0].iteritems(), reverse=True, 
-#		key=lambda x: get_fit_val(x, target_keys, cur_micros))
-#	return sorted_nuts[0][0]
+    sorted_nuts = sorted(
+db_copy.iteritems(), reverse=True, 
+key=lambda x: get_fit_val(x, target_keys, cur_micros))
+    return sorted_nuts[0]
+
 name = 0
 nut = 0
 def get_fit_val(item, target_keys, cur_micros):
-	add_val = 0
-	fit_val = 0
-	if item[1]["Energ_Kcal"] == 0:
-		return 0;
-	for tkey in target_keys:
-		name = item[1]
-		orig = orig_target[tkey]
-		cur = cur_micros[tkey]
-		nut = item[1][tkey]
-		#fit_val += (orig - cur)*nut/(orig^2)
-		if (not(item[1][tkey])):
-			break
-		try:
-			add_val = (orig_target[tkey] - cur_micros[tkey])*item[1][tkey]/(orig_target[tkey]^2)
-			fit_val += max(add_val, 0)
-		except:
-			fit_val = fit_val
-	return fit_val/(item[1]["Energ_Kcal"])
+    add_val = 0
+    fit_val = 0
+    percent_off = 0
+    percent_over = 0
+    if item[1]["Energ_Kcal"] == 0:
+        return 0;
+    for tkey in target_keys:
+        if (not(item[1][tkey])):
+            continue
+        try:
+            percent_off = (orig_target[tkey] - cur_micros[tkey])/orig_target[tkey]
+            percent_off = max(percent_off, 0)
+            add_val = min(percent_off*item[1][tkey]/orig_target[tkey],percent_off)
+            fit_val += max(add_val, 0)
+        except:
+            fit_val = fit_val
+        try:
+            percent_over = (cur_micros[tkey]-max_target[tkey])/max_target[tkey]
+            percent_over = max(percent_over, 0)
+            add_val = percent_over*item[1][tkey]/orig_target[tkey]
+            fit_val -= add_val
+        except:
+            fit_val = fit_val
+    for tkey in optimization_macros:
+        if (not(item[1][tkey])):
+            continue
+        try:
+            fit_val += item[1][tkey]*optimization_macros[tkey]
+        except:
+            fit_val = fit_val
+    return fit_val/(item[1]["Energ_Kcal"])
+    
+    
 db_copy = db.copy()
 target_keys = orig_target.keys()
 target = orig_target.copy()
 cur_micros = empty_micros.copy()
 calories = 0
 db_nuts = get_db_nuts(target_keys)
+max_calories = 1000
 meal = []
 def find_answer():
-	while True:
-	    db_copy = db.copy()
-	    target = orig_target.copy()
-	    cur_micros = empty_micros.copy()
-	    calories = 0
-	    db_nuts = get_db_nuts(target_keys)
-	    meal = []
-	    while calories < 2000:
-			best_food = get_best(db_copy, target_keys, cur_micros)
-			weight = 1
-			meal.append((best_food[0], weight))
-			for key in target_keys:
-				cur = cur_micros[key]
-				best_food_zero = best_food[0]
-				dbzero = db_copy[best_food[0]]
-				dbkey = db_copy[best_food[0]][key]
-				if (not(db_copy[best_food[0]][key])):
-					continue
-				cur_micros[key] = (cur_micros[key] + db_copy[best_food[0]][key] * weight)
-			calories += db_copy[best_food[0]]["Energ_Kcal"] * weight
-			del db_copy[best_food[0]]
-		
-	    #sorted_nuts = get_sorted_nuts(db_nuts, target_keys)
-	    #meal = get_meal(sorted_nuts, target_keys)
-	
-	    sums = dict(Sugar_Tot=0, FA_Sat=0, Cholestrl=0, Energ_Kcal=0)
-	    for item, weight in meal:
-	        if weight:
-	            print item, "%.2f" % (weight * 100), db[item]["Shrt_Desc"]
-	        for sum_key in sums.keys():
-	            if db[item][sum_key]:
-	                sums[sum_key] += db[item][sum_key] * weight
-	    print sums
-	
-	    keycode = raw_input("Item code to remove: ")
-	    print "Removing [%s]" % keycode
-	    if len(keycode) < 5:
-	        for key in db.keys():
-	            if key.startswith(keycode):
-	                db.pop(key)
-	    else:
-	        db.pop(keycode)
-	    find_answer()    
-	    
+    while True:
+        db_copy = db.copy()
+        target = orig_target.copy()
+        cur_micros = empty_micros.copy()
+        calories = 0
+        db_nuts = get_db_nuts(target_keys)
+        meal = []
+        weight = 1
+        while calories < max_calories:
+            best_food = get_best(db_copy, target_keys, cur_micros)
+            meal.append((best_food[0], weight))
+            for key in target_keys:
+                if (not(db_copy[best_food[0]][key])):
+                    continue
+                cur_micros[key] = (cur_micros[key] + db_copy[best_food[0]][key] * weight)
+            calories += db_copy[best_food[0]]["Energ_Kcal"] * weight
+            del db_copy[best_food[0]]
+        for x in range(0,10):
+            if x > 10:
+                x = x
+            worst_food = get_worst(meal, db_copy, db, target_keys, cur_micros, max_target)
+            meal.remove(worst_food)
+            db_copy[worst_food[0]] = db[worst_food[0]]
+            worst = db_copy[worst_food[0]]
+            for key in target_keys:
+                if (not(db_copy[worst_food[0]][key])):
+                    continue
+                cur_micros[key] = (cur_micros[key] - db_copy[worst_food[0]][key] * weight)
+            calories -= db_copy[worst_food[0]]["Energ_Kcal"] * weight
+            while calories < max_calories:
+                best_food = get_best(db_copy, target_keys, cur_micros)
+                meal.append((best_food[0], weight))
+                for key in target_keys:
+                    if (not(db_copy[best_food[0]][key])):
+                        continue
+                    cur_micros[key] = (cur_micros[key] + db_copy[best_food[0]][key] * weight)
+                calories += db_copy[best_food[0]]["Energ_Kcal"] * weight
+                del db_copy[best_food[0]]
+            
+            
+            
+        sums = dict(Sugar_Tot=0, FA_Sat=0, Cholestrl=0, Energ_Kcal=0)
+        for item, weight in meal:
+            if weight:
+                print item, "%.2f" % (weight * 100), db[item]["Shrt_Desc"]
+            for sum_key in sums.keys():
+                if db[item][sum_key]:
+                    sums[sum_key] += db[item][sum_key] * weight
+        print sums
+
+        keycode = raw_input("Item code to remove: ")
+        print "Removing [%s]" % keycode
+        if len(keycode) < 5:
+            for key in db.keys():
+                if key.startswith(keycode):
+                    db.pop(key)
+        else:
+            db.pop(keycode)
+        find_answer()    
+        
 find_answer()
     # rotate thru first to optimize
 #    target_keys.append(target_keys.pop(0))
